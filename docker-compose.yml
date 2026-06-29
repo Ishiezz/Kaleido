@@ -1,0 +1,90 @@
+version: "3.9"
+
+# Full production stack: Postgres + pgvector, vLLM (GPU), API, UI.
+# Requires a CUDA-capable GPU for the vllm service.
+# CPU-only users: use docker-compose.stub.yml instead.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kaleido
+      POSTGRES_PASSWORD: kaleido
+      POSTGRES_DB: kaleido
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kaleido -d kaleido"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  vllm:
+    image: vllm/vllm-openai:latest
+    restart: unless-stopped
+    command: >
+      --model Qwen/Qwen2.5-7B-Instruct
+      --guided-decoding-backend xgrammar
+      --max-model-len 4096
+      --port 8001
+    ports:
+      - "8001:8001"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    command: uvicorn kaleido.api:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      KALEIDO_BACKEND: vllm
+      KALEIDO_DATABASE_URL: postgresql+asyncpg://kaleido:kaleido@postgres:5432/kaleido
+      KALEIDO_VLLM_BASE_URL: http://vllm:8001/v1
+      KALEIDO_FACETS_CSV_PATH: data/processed/facets_enriched.csv
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vllm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  ui:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    command: streamlit run ui/streamlit_app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      KALEIDO_API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
