@@ -23,6 +23,7 @@ data/eval/
 AGENTIC_IDE_PROMPT.md
 DATA_DICTIONARY.md
 TECHNICAL_PLAN.md
+DEPLOYMENT.md
 agentic_ide_prompt
 technical_plan
 data_dictionary
