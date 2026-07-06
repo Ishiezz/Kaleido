@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-_API_DEFAULT = os.getenv("KALEIDO_API_URL", "http://localhost:8000")
+_API_DEFAULT = os.getenv("KALEIDO_API_URL", "https://kaleido-api.onrender.com")
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""<style>
