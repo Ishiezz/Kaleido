@@ -21,11 +21,12 @@ _API_DEFAULT = os.getenv("KALEIDO_API_URL", "https://kaleido-api.onrender.com")
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 [data-testid="stAppViewContainer"] { background: #07090f; }
 [data-testid="stHeader"] { background: transparent; border-bottom: 1px solid #111827; }
 [data-testid="stDecoration"], .stDeployButton { display: none !important; }
 .main .block-container { padding: 0 2.5rem 4rem; max-width: 1200px; }
-* { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+* { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
 
 /* ── Header ── */
 .k-header {
@@ -56,11 +57,9 @@ st.markdown("""<style>
 .k-steps { display: flex; gap: 0; margin: 2.5rem 0; }
 .k-step  { flex: 1; text-align: center; position: relative; }
 .k-step:not(:last-child)::after {
-    content: ""; position: absolute; top: 18px; right: -1px;
-    width: calc(100% - 36px); height: 1px;
-    background: linear-gradient(90deg, #1e293b, #0f172a);
-    left: 50%; transform: none; right: auto;
-    width: 100%; left: 55%; z-index: 0;
+    content: ""; position: absolute; top: 18px;
+    left: 55%; width: 45%; height: 1px;
+    background: linear-gradient(90deg, #1e293b, #0f172a); z-index: 0;
 }
 .k-step-num {
     width: 36px; height: 36px; border-radius: 50%;
@@ -198,6 +197,29 @@ hr { border-color: #111827 !important; margin: .8rem 0 !important; }
     border: 1px solid #1e293b !important; border-radius: 7px !important; width: 100% !important;
 }
 [data-testid="stFormSubmitButton"] button:hover { color: #00d4aa !important; border-color: #00d4aa40 !important; }
+
+/* ── Offline banner ── */
+.k-offline-banner {
+    display: flex; align-items: flex-start; gap: 14px;
+    background: #0f0a0a; border: 1px solid #ef444430;
+    border-left: 3px solid #ef4444; border-radius: 10px;
+    padding: 1rem 1.2rem; margin-bottom: 1.2rem;
+}
+.k-offline-icon  { font-size: 1.3rem; flex-shrink: 0; margin-top: 1px; }
+.k-offline-title { font-size: .85rem; font-weight: 700; color: #fca5a5; margin-bottom: 3px; }
+.k-offline-sub   { font-size: .75rem; color: #7f1d1d; line-height: 1.5; }
+
+/* ── Responsive ── */
+@media (max-width: 768px) {
+    .main .block-container { padding: 0 1rem 3rem; }
+    .k-steps { flex-direction: column; gap: 1rem; }
+    .k-step:not(:last-child)::after { display: none; }
+    .k-features { grid-template-columns: 1fr; }
+    .k-metrics { flex-wrap: wrap; }
+    .k-met { min-width: calc(50% - 5px); }
+    .k-hero-title { font-size: 1.8rem; }
+    .k-header { flex-wrap: wrap; gap: 8px; }
+}
 </style>""", unsafe_allow_html=True)
 
 # ── Logo SVG ──────────────────────────────────────────────────────────────────
@@ -311,6 +333,15 @@ def _health(url: str) -> dict[str, Any] | None:
         return None
 
 
+def _wake_api(url: str) -> dict[str, Any] | None:
+    """Long-timeout health probe to wake a cold-started Render instance."""
+    try:
+        r = httpx.get(f"{url}/healthz", timeout=60.0)
+        return r.json() if r.status_code == 200 else None
+    except Exception:
+        return None
+
+
 def _score_api(url: str, turns: list[dict[str, Any]], conv_id: str) -> dict[str, Any]:
     payload = {"conversation": {"conversation_id": conv_id, "turns": turns}}
     r = httpx.post(f"{url}/score", json=payload, timeout=180.0)
@@ -359,11 +390,21 @@ _DEMOS: list[dict[str, Any]] = [
 ]
 
 # ── Session state ─────────────────────────────────────────────────────────────
-if "api_url"       not in st.session_state: st.session_state.api_url       = _API_DEFAULT
-if "builder_turns" not in st.session_state: st.session_state.builder_turns = []
-if "score_result"  not in st.session_state: st.session_state.score_result  = None
-if "demo_results"  not in st.session_state: st.session_state.demo_results  = {}
-if "show_na"       not in st.session_state: st.session_state.show_na       = False
+if "api_url"         not in st.session_state: st.session_state.api_url         = _API_DEFAULT
+if "builder_turns"   not in st.session_state: st.session_state.builder_turns   = []
+if "score_result"    not in st.session_state: st.session_state.score_result    = None
+if "demo_results"    not in st.session_state: st.session_state.demo_results    = {}
+if "show_na"         not in st.session_state: st.session_state.show_na         = False
+if "_wake_attempted" not in st.session_state: st.session_state._wake_attempted = False
+
+# ── Cold-start wake ─────────────────────────────────────────────────────────
+if _health(st.session_state.api_url) is None and not st.session_state._wake_attempted:
+    st.session_state._wake_attempted = True
+    with st.spinner("🌙 Waking API from sleep\u2026 (~30s on first load)"):
+        woken = _wake_api(st.session_state.api_url)
+    if woken:
+        _health.clear()
+        st.rerun()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -488,7 +529,13 @@ with tab_score:
     st.markdown("<div style='height:1.2rem'></div>", unsafe_allow_html=True)
 
     if not connected:
-        st.warning("API is offline. Start it with:\n```\nKALEIDO_BACKEND=stub KALEIDO_DATABASE_URL=sqlite+aiosqlite:///./kaleido.db uvicorn kaleido.api:app --reload\n```")
+        st.markdown("""<div class="k-offline-banner">
+  <div class="k-offline-icon">⚡</div>
+  <div>
+    <div class="k-offline-title">API unreachable</div>
+    <div class="k-offline-sub">The backend may still be waking up — refresh the page in a few seconds. You can also check or update the API URL in the sidebar.</div>
+  </div>
+</div>""", unsafe_allow_html=True)
 
     left, right = st.columns([1, 1], gap="large")
 
@@ -636,4 +683,10 @@ with tab_demo:
         st.markdown("<div style='height:.4rem'></div>", unsafe_allow_html=True)
 
     if not connected:
-        st.warning("API is offline — demo scoring is disabled. Start the API first.")
+        st.markdown("""<div class="k-offline-banner">
+  <div class="k-offline-icon">⚡</div>
+  <div>
+    <div class="k-offline-title">API unreachable — demo scoring is disabled</div>
+    <div class="k-offline-sub">Refresh the page in a few seconds to retry the connection.</div>
+  </div>
+</div>""", unsafe_allow_html=True)
